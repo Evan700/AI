@@ -1,0 +1,91 @@
+---
+title: "MMML Submission"
+output: html_document
+date: "2025-03-18"
+---
+#Load Data
+takes in M or W only should be XGBoost M/W #features
+```{r setup, include=FALSE}
+file_path <- file.choose()
+df_finalM <- read.csv(file_path)
+
+file_path <- file.choose()
+df_finalW <- read.csv(file_path)
+
+#Load Sample Submission to Merge my Predictions 
+read_path <- "C:/Users/Evan/Documents/Kaggle/march-machine-learning-mania-2025/SampleSubmissionStage2.csv"
+sample_submission <- read.csv(read_path)
+```
+
+#Double Number of matchups
+##With School
+FOR Bracket making purposes only*************
+```{r setup, include=FALSE}
+dfM <- df_finalM
+
+dfM_reversed <- dfM %>% select(-X) %>%
+  rename(WTeamID_orig = WTeamID, LTeamID_orig = LTeamID, Win_Probability_orig = Win_Probability, W_School_orig = W_School, L_School_orig = L_School) %>%
+  transmute(
+    WTeamID = LTeamID_orig,
+    LTeamID = WTeamID_orig,
+    Win_Probability = 1 - Win_Probability_orig,
+    W_School = L_School_orig,
+    L_School = W_School_orig
+  )
+
+# Combine the original and reversed datasets
+df_finalM <- bind_rows(dfM, dfM_reversed)
+
+dfW <- df_finalW
+
+dfW_reversed <- dfW %>% select(-X) %>%
+  rename(WTeamID_orig = WTeamID, LTeamID_orig = LTeamID, Win_Probability_orig = Win_Probability, W_School_orig = W_School, L_School_orig = L_School) %>%
+  transmute(
+    WTeamID = LTeamID_orig,
+    LTeamID = WTeamID_orig,
+    Win_Probability = 1 - Win_Probability_orig,
+    W_School = L_School_orig,
+    L_School = W_School_orig
+  )
+
+# Combine the original and reversed datasets
+df_finalW <- bind_rows(dfW, dfW_reversed)
+
+
+
+final_submission <- df_finalM %>% select(WTeamID, LTeamID, W_School, L_School, Win_Probability) #Change this
+
+```
+
+#Load Sample Submission to Merge my Predictions 
+```{r setup, include=FALSE}
+read_path <- "C:/Users/Evan/Documents/Kaggle/march-machine-learning-mania-2025/SampleSubmissionStage2.csv"
+sample_submission <- read.csv(read_path)
+```
+
+once mens and womens are both done do this step
+```{r setup, include=FALSE}
+df_final <- bind_rows(df_finalM, df_finalW)
+
+df_predictions <- df_final %>% select(-X) %>%
+  # mutate(
+  #   TeamA = pmin(WTeamID, LTeamID),
+  #   TeamB = pmax(WTeamID, LTeamID),
+  #   ID = paste0("2025_", TeamA, "_", TeamB)  # Update with the correct year
+  # ) %>%
+  mutate(ID = paste0("2025_", WTeamID, "_", LTeamID)) %>%
+  select(ID, Win_Probability)
+
+final_submission <- sample_submission %>%
+  left_join(df_predictions, by = "ID") %>%
+  mutate(Pred = ifelse(is.na(Win_Probability), 0.5, Win_Probability)) %>%
+  select(ID, Pred)
+
+```
+
+#Save the csv
+```{r setup, include=FALSE}
+save_name <- "XGBoost40MBracket.csv"
+save_path <- paste0("C:/Users/Evan/Documents/Kaggle/march-machine-learning-mania-2025/My stats/", save_name)
+write.csv(final_submission,save_path,row.names = TRUE)
+```
