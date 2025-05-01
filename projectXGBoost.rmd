@@ -1,0 +1,320 @@
+---
+title: "XGBoost MMML"
+output: html_document
+date: "2025-03-17"
+---
+
+```{r setup, include=FALSE}
+library(xgboost)
+library(caret) 
+library(tidyverse)
+library(ggplot2)
+```
+
+#Import Dataset
+should be M or W Master
+```{r import data, echo=TRUE}
+file_path <- file.choose()
+final_data <- read.csv(file_path)
+```
+
+show correlations
+``` {r target, echo=TRUE}
+correlations <- final_data %>%
+  select(-Win, -W_School, -L_School, -X) %>%  # Exclude the binary Win column itself
+  summarise(across(everything(), ~ cor(. , final_data$Win, use = "complete.obs"))) %>% # Calculate correlation with 'Win'
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Correlation") %>%
+  arrange(desc(abs(Correlation))) %>%  # Sort by absolute value of correlation (for magnitude)
+  top_n(100, wt = abs(Correlation))
+
+print(correlations)
+```
+
+correlation matrix
+``` {r target, echo=TRUE}
+# Keep only top 5 variables by absolute correlation
+top5_correlations <- correlations %>%
+  slice_max(order_by = abs(Correlation), n = 5)
+
+# Plot
+ggplot(top5_correlations, aes(x = reorder(Variable, Correlation), y = Correlation, fill = Correlation)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal() +
+  labs(title = "Top 5 Variables Correlated with Win",
+       x = "Variable",
+       y = "Correlation")
+
+```
+
+#Feature Selection
+Using XGBoost
+```{r feature selection, echo=TRUE}
+numeric_data <- final_data %>%
+  select(-W_School, -L_School, -X)
+df_with_na <- numeric_data %>% filter(if_any(everything(), is.na))
+# 
+# # View the result
+# print(df_with_na)
+
+
+# Convert predictors to a matrix
+X <- as.matrix(select(numeric_data, -Win))
+
+# Convert target variable to numeric
+y <- as.numeric(numeric_data$Win)
+
+# Check dimensions
+print(dim(X))  # Should be (num_rows, num_features)
+print(length(y))  # Should be num_rows
+```
+Selecting amount of features in slice
+```{r feature selection, echo=TRUE}
+# Create DMatrix (optimized format for XGBoost)
+dtrain <- xgb.DMatrix(data = X, label = y)
+
+# Train the model
+xgb_model <- xgboost(data = dtrain, 
+                     nrounds = 300,  
+                     objective = "binary:logistic",  
+                     eval_metric = "logloss",  
+                     max_depth = 6,  
+                     eta = 0.1)
+
+# Get feature importance
+importance_matrix <- xgb.importance(model = xgb_model)
+
+# View top 40 most important features
+top_features <- importance_matrix %>%
+  arrange(desc(Gain)) %>%
+  slice(1:40) %>%
+  pull(Feature)
+
+# Select only top features for final model
+selected_data <- numeric_data %>%
+  select(all_of(top_features), Win)
+
+```
+verifying results
+```{r feature selection, echo=TRUE}
+print(importance_matrix)
+print(dim(selected_data))  # Should show (num_rows, 51) since 50 features + Win
+```
+
+#Train Final Model with selected features
+```{r final model, echo=TRUE}
+# Set seed for reproducibility
+set.seed(64)
+
+# Create a 80/20 train-test split
+train_index <- createDataPartition(selected_data$Win, p = 0.9, list = FALSE)
+
+train_data <- selected_data[train_index, ]
+test_data <- selected_data[-train_index, ]
+
+# Extract features (X) and target (y) for both train and test sets
+X_train <- as.matrix(select(train_data, -Win))
+y_train <- as.numeric(train_data$Win)
+
+X_test <- as.matrix(select(test_data, -Win))
+y_test <- as.numeric(test_data$Win)
+
+# Convert training data into XGBoost DMatrix format
+dtrain <- xgb.DMatrix(data = X_train, label = y_train)
+
+# Train the model
+xgb_model <- xgboost(data = dtrain, 
+                     nrounds = 200,  #change this
+                     objective = "binary:logistic",  
+                     eval_metric = "logloss",  
+                     max_depth = 3,  
+                     eta = 0.05)
+
+# Convert test set into XGBoost DMatrix
+dtest <- xgb.DMatrix(data = X_test)
+
+# Get predicted probabilities (between 0 and 1)
+y_pred_prob <- predict(xgb_model, dtest)
+
+# Convert probabilities to binary class (threshold = 0.5)
+y_pred <- ifelse(y_pred_prob > 0.5, 1, 0)
+
+# Load required libraries for evaluation
+library(caret)
+
+# Create a confusion matrix
+conf_matrix <- confusionMatrix(factor(y_pred), factor(y_test))
+
+# Print accuracy and other metrics
+print(conf_matrix)
+
+
+```
+
+#Predict on 2025 data
+should be M or W 2025
+```{r final model, echo=TRUE}
+file_path <- file.choose()
+W2025 <- read.csv(file_path) #Change this
+
+M_or_W <- "WNCAATourneySeeds.csv" #Change this
+read_path <- paste0("C:/Users/Evan/Documents/Kaggle/march-machine-learning-mania-2025/", M_or_W)
+seed <- read.csv(read_path)
+seed <- seed %>%
+   mutate(Seed = str_sub(Seed,2) %>% 
+            str_replace("[ab]$", "")) %>%
+  filter(Season == 2025)
+
+```
+format the 2025 data the same
+##Mens Format
+```{r final model, echo=TRUE}
+szn <- "2025"
+M2025 <- M2025 %>% mutate(Season = szn) %>%
+  mutate(
+    Kenpom._.NetRtg = as.numeric(Kenpom._.NetRtg),
+    School.Advanced._.Pace = as.numeric(School.Advanced._.Pace)
+  ) %>%
+  mutate(AVG_Score_Margin = (Points._.Tm. - Points._.Opp.) / Overall._.G) %>%
+  mutate(FG_pct_Difference = Totals._.FG. - Opponent._.FG.) %>%
+  mutate(eFG_pct_Difference = School.Advanced._.eFG. - Opponent.Advanced._.eFG.) %>%
+  mutate(Rebound_Margin = School.Advanced._.TRB. - Opponent.Advanced._.TRB.) %>%
+  mutate(TO_Margin = School.Advanced._.TOV. - Opponent.Advanced._.TOV.) %>%
+  mutate(TriangleEXC = Kenpom._.NetRtg * School.Advanced._.Pace * .01) %>%
+  mutate(Season = as.integer(Season))
+
+combined_seeds <- M2025 %>%
+  left_join(select(seed, TeamID, Seed, Season), by = c("ID" = "TeamID", "Season"))
+combined_seeds <- combined_seeds %>%
+  filter(!is.na(Seed))
+
+# Step 1: Create all unique matchups (each team faces each other once)
+matchups <- combined_seeds %>%
+  select(Season, ID) %>%
+  distinct() %>%
+  rename(WTeamID = ID) %>%
+  left_join(
+    combined_seeds %>% select(Season, ID) %>% distinct() %>% rename(LTeamID = ID),
+    by = "Season"
+  ) %>%
+  filter(WTeamID < LTeamID)  # Avoid duplicate matchups (1001 vs. 1002 but not 1002 vs. 1001)
+
+# Step 2: Merge in team statistics (prefix W_ and L_ to team stats)
+combined <- matchups %>%
+  left_join(combined_seeds, by = c("Season", "WTeamID" = "ID")) %>%
+  rename_with(~paste0("W_", .), .cols = -c(Season, WTeamID, LTeamID)) %>%
+  left_join(combined_seeds, by = c("Season", "LTeamID" = "ID")) %>%
+  rename_with(~paste0("L_", .), .cols = -c(Season, WTeamID, LTeamID, starts_with("W_")))
+
+combined <- combined %>%
+  filter(!is.na(W_Seed)) %>%
+  filter(!is.na(L_Seed)) %>%
+  mutate(W_Seed = as.integer(W_Seed)) %>%
+  mutate(L_Seed = as.integer(L_Seed))
+combined_diff <- combined %>%
+  mutate(across(starts_with("W_") & !matches("W_School"), 
+                ~ . - get(str_replace(cur_column(), "W_", "L_")), 
+                .names = "diff_{.col}"))
+# tourney_flipped <- combined_diff %>%
+#   rename_with(~str_replace(., "W_", "temp_"), starts_with("W_")) %>%
+#   rename_with(~str_replace(., "L_", "W_"), starts_with("L_")) %>%
+#   rename_with(~str_replace(., "temp_", "L_"), starts_with("temp_")) %>%
+#   mutate(across(starts_with("W_") & !matches("W_School"), ~ . - get(str_replace(cur_column(), "W_", "L_")), .names = "diff_{.col}"))
+
+final_data <- combined_diff #bind_rows(combined_diff, tourney_flipped)
+
+numeric_data <- final_data %>%
+  select(-W_School, -L_School)
+```
+
+##Womens Format
+```{r final model, echo=TRUE}
+szn <- "2025"
+W2025 <- W2025 %>% mutate(Season = szn) %>%
+  mutate(AVG_Score_Margin = (Points_Tm. - Points_Opp.) / Overall_G) %>%
+  mutate(FG_pct_Difference = Totals_FG. - Opponent_FG.) %>%
+  mutate(eFG_pct_Difference = School.Advanced_eFG. - Opponent.Advanced_eFG.) %>%
+  mutate(Rebound_Margin = School.Advanced_TRB. - Opponent.Advanced_TRB.) %>%
+  mutate(TO_Margin = School.Advanced_TOV. - Opponent.Advanced_TOV.) %>%
+  mutate_at(vars(-School), ~ as.numeric(as.character(.)))
+
+combined_seeds <- W2025 %>%
+  left_join(select(seed, TeamID, Seed, Season), by = c("ID" = "TeamID", "Season"))
+combined_seeds <- combined_seeds %>%
+  filter(!is.na(Seed))
+
+# Step 1: Create all unique matchups (each team faces each other once)
+matchups <- combined_seeds %>%
+  select(Season, ID) %>%
+  distinct() %>%
+  rename(WTeamID = ID) %>%
+  left_join(
+    combined_seeds %>% select(Season, ID) %>% distinct() %>% rename(LTeamID = ID),
+    by = "Season"
+  ) %>%
+  filter(WTeamID < LTeamID)  # Avoid duplicate matchups (1001 vs. 1002 but not 1002 vs. 1001)
+
+# Step 2: Merge in team statistics (prefix W_ and L_ to team stats)
+combined <- matchups %>%
+  left_join(combined_seeds, by = c("Season", "WTeamID" = "ID")) %>%
+  rename_with(~paste0("W_", .), .cols = -c(Season, WTeamID, LTeamID)) %>%
+  left_join(combined_seeds, by = c("Season", "LTeamID" = "ID")) %>%
+  rename_with(~paste0("L_", .), .cols = -c(Season, WTeamID, LTeamID, starts_with("W_")))
+
+combined <- combined %>%
+  filter(!is.na(W_Seed)) %>%
+  filter(!is.na(L_Seed)) %>%
+  mutate(W_Seed = as.integer(W_Seed)) %>%
+  mutate(L_Seed = as.integer(L_Seed))
+combined_diff <- combined %>%
+  mutate(across(starts_with("W_") & !matches("W_School"), 
+                ~ . - get(str_replace(cur_column(), "W_", "L_")), 
+                .names = "diff_{.col}"))
+# tourney_flipped <- combined_diff %>%
+#   rename_with(~str_replace(., "W_", "temp_"), starts_with("W_")) %>%
+#   rename_with(~str_replace(., "L_", "W_"), starts_with("L_")) %>%
+#   rename_with(~str_replace(., "temp_", "L_"), starts_with("temp_")) %>%
+#   mutate(across(starts_with("W_") & !matches("W_School"), ~ . - get(str_replace(cur_column(), "W_", "L_")), .names = "diff_{.col}"))
+
+final_data <- combined_diff #bind_rows(combined_diff, tourney_flipped)
+
+numeric_data <- final_data %>%
+  select(-W_School, -L_School)
+```
+
+#Predict new data
+```{r final model, echo=TRUE}
+
+# Select only the same features used in training
+new_data_prepped <- numeric_data %>%
+  select(all_of(top_features))  # Use the top 50 features from training
+
+# Convert to matrix for XGBoost
+X_real <- as.matrix(new_data_prepped)
+
+# Convert real dataset to DMatrix format
+dreal <- xgb.DMatrix(data = X_real)
+
+# Generate predictions (probabilities between 0 and 1)
+predicted_probabilities <- predict(xgb_model, dreal)
+
+# Convert probabilities to binary outcomes (Win = 1, Lose = 0)
+predicted_classes <- ifelse(predicted_probabilities > 0.5, 1, 0)
+
+# Add predictions to the original dataset
+new_data_results <- numeric_data %>%
+  mutate(Predicted_Win = predicted_classes, Win_Probability = predicted_probabilities)
+
+```
+#Export Final Data
+```{r final model, echo=TRUE}
+export2025 <- new_data_results %>% select(WTeamID, LTeamID, Win_Probability)  %>%
+   mutate(W_School = final_data$W_School,
+          L_School = final_data$L_School)
+
+# Save results to a CSV file
+save_name <- "XGBoostW40.csv"
+save_path <- paste0("C:/Users/Evan/Documents/Kaggle/march-machine-learning-mania-2025/My stats/", save_name)
+write.csv(export2025,save_path,row.names = TRUE)
+```
