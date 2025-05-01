@@ -1,0 +1,157 @@
+---
+title: "combined"
+output: html_document
+date: "2025-03-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#Load Packages
+```{r setup, include=FALSE}
+library(tidyverse)
+```
+#Load Data
+My data
+```{r setup, include=FALSE}
+name <- "W2024.csv"
+path <- paste0("C:/Users/Evan/Documents/Kaggle/march-machine-learning-mania-2025/My stats/Original Data/", name)
+W2024 <- read.csv(path)
+```
+seed data
+```{r setup, include=FALSE}
+M_or_W <- "WNCAATourneySeeds.csv"
+
+
+read_path <- paste0("C:/Users/Evan/Documents/Kaggle/march-machine-learning-mania-2025/", M_or_W)
+seed <- read.csv(read_path)
+
+seed <- seed %>%
+   mutate(Seed = str_sub(Seed,2) %>% 
+            str_replace("[ab]$", "")) %>%
+  filter(Season >= 2011) %>%
+  filter(Season != 2021)  %>%
+  filter(Season != 2025)
+```
+Win data
+```{r setup, include=FALSE}
+name <- "WNCAATourneyCompactResults.csv"
+
+read_path <- paste0("C:/Users/Evan/Documents/Kaggle/march-machine-learning-mania-2025/", name)
+compact <- read.csv(read_path)
+compact <- compact %>% filter(Season >= "2011" & Season <= "2024") %>%
+  select(Season,WTeamID,LTeamID) %>% 
+  filter(Season != 2021)
+```
+#Add Mutations
+go through every year manually
+##Mens mutations
+```{r setvariables, echo=TRUE}
+szn <- "2011"
+M2011 <- M2011 %>% mutate(Season = szn) %>%
+  mutate(
+    Kenpom._.NetRtg = as.numeric(Kenpom._.NetRtg),
+    School.Advanced._.Pace = as.numeric(School.Advanced._.Pace)
+  ) %>%
+  mutate(AVG_Score_Margin = (Points._.Tm. - Points._.Opp.) / Overall._.G) %>%
+  mutate(FG_pct_Difference = Totals._.FG. - Opponent._.FG.) %>%
+  mutate(eFG_pct_Difference = School.Advanced._.eFG. - Opponent.Advanced._.eFG.) %>%
+  mutate(Rebound_Margin = School.Advanced._.TRB. - Opponent.Advanced._.TRB.) %>%
+  mutate(TO_Margin = School.Advanced._.TOV. - Opponent.Advanced._.TOV.) %>%
+  mutate(TriangleEXC = Kenpom._.NetRtg * School.Advanced._.Pace * .01)
+
+```
+
+##Womens Mutations
+```{r setvariables, echo=TRUE}
+szn <- "2024"
+
+W2024 %>% select(-School) %>%
+  mutate_all(~ as.numeric(as.character(.)))
+
+W2024 <- W2024 %>% mutate(Season = szn) %>%
+  mutate(AVG_Score_Margin = (Points_Tm. - Points_Opp.) / Overall_G) %>%
+  mutate(FG_pct_Difference = Totals_FG. - Opponent_FG.) %>%
+  mutate(eFG_pct_Difference = School.Advanced_eFG. - Opponent.Advanced_eFG.) %>%
+  mutate(Rebound_Margin = School.Advanced_TRB. - Opponent.Advanced_TRB.) %>%
+  mutate(TO_Margin = School.Advanced_TOV. - Opponent.Advanced_TOV.)
+
+```
+
+#Create Master seed/years dataset
+```{r setup, include=FALSE}
+years_combined <- bind_rows(W2011,W2012,W2013,W2014,W2015,W2016,W2017,W2018,W2019,W2022,W2023,W2024)
+years_combined <- years_combined %>% mutate_at(vars(-School), ~ as.numeric(as.character(.)))
+combined_seeds <- years_combined %>%
+  left_join(select(seed, TeamID, Seed, Season), by = c("ID" = "TeamID", "Season"))
+```
+
+```{r setup, include=FALSE}
+#str(years_combined)
+#str(seed)
+
+#years_combined <- years_combined %>%
+#  mutate(Season = as.integer(Season))
+
+
+```
+#Combined Seeds
+```{r setup, include=FALSE}
+combined_seeds <- combined_seeds %>%
+  filter(!is.na(Seed))
+```
+#Add wins
+```{r setup, include=FALSE}
+combined <- compact %>% left_join(combined_seeds, by = c("Season", "WTeamID" = "ID")) %>%
+  rename_with(~paste0("W_", .), .cols = -c(Season, WTeamID, LTeamID))  # Prefix winning team stats with "W_"
+
+combined <- combined %>%
+  left_join(combined_seeds, by = c("Season", "LTeamID" = "ID")) %>%
+  rename_with(~paste0("L_", .), .cols = -c(Season, WTeamID, LTeamID, starts_with("W_")))
+```
+create a win column with winning stats
+```{r test, echo=TRUE}
+
+combined <- combined %>%
+  filter(!is.na(W_Seed)) %>%
+  filter(!is.na(L_Seed)) %>%
+  mutate(W_Seed = as.integer(W_Seed)) %>%
+  mutate(L_Seed = as.integer(L_Seed))
+combined_diff <- combined %>%
+  mutate(across(starts_with("W_") & !matches("W_School"), 
+                ~ . - get(str_replace(cur_column(), "W_", "L_")), 
+                .names = "diff_{.col}"))
+combined_diff <- combined_diff %>%
+  mutate(Win = 1)  # Since the first team is always the winner in the original data
+```
+losing columns
+```{r test, echo=TRUE}
+tourney_flipped <- combined_diff %>%
+  rename_with(~str_replace(., "W_", "temp_"), starts_with("W_")) %>%
+  rename_with(~str_replace(., "L_", "W_"), starts_with("L_")) %>%
+  rename_with(~str_replace(., "temp_", "L_"), starts_with("temp_")) %>%
+  mutate(across(starts_with("W_") & !matches("W_School"), ~ . - get(str_replace(cur_column(), "W_", "L_")), .names = "diff_{.col}")) %>%
+  mutate(Win = 0)  # Now, the originally losing team is "winning" in this flipped row
+```
+##Final Data
+``` {r target, echo=TRUE}
+final_data <- bind_rows(combined_diff, tourney_flipped)
+```
+#Correlations
+``` {r target, echo=TRUE}
+correlations <- final_data %>%
+  select(-Win, -W_School, -L_School) %>%  # Exclude the binary Win column itself
+  summarise(across(everything(), ~ cor(. , final_data$Win, use = "complete.obs"))) %>% # Calculate correlation with 'Win'
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Correlation") %>%
+  arrange(desc(abs(Correlation))) %>%  # Sort by absolute value of correlation (for magnitude)
+  top_n(50, wt = abs(Correlation))
+
+print(correlations)
+```
+
+#Save Data
+``` {r target, echo=TRUE}
+save_name <- "WMaster.csv"
+save_path <- paste0("C:/Users/Evan/Documents/Kaggle/march-machine-learning-mania-2025/My stats/", save_name)
+write.csv(final_data,save_path,row.names = TRUE)
+```
