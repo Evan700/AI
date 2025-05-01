@@ -1,0 +1,219 @@
+---
+title: "March Madness Mania"
+output: pdf_document
+date: "2025-03-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Call Libraries
+```{r import data, echo=TRUE}
+library(tidyverse)
+library(dplyr)
+```
+
+#Import Dataset
+```{r import data, echo=TRUE}
+file_path <- file.choose()
+ds <- read.csv(file_path)
+```
+
+##Import Seed data
+```{r import seed data, echo=TRUE}
+M_or_W <- "MNCAATourneySeeds.csv"
+
+
+read_path <- paste0("C:/Users/Evan/Documents/Kaggle/march-machine-learning-mania-2025/", M_or_W)
+seed <- read.csv(read_path)
+
+seed <- seed %>%
+   mutate(Seed = str_sub(Seed,2) %>% 
+            str_replace("[ab]$", ""))
+
+print(seed)
+```
+
+##Set Variables
+```{r setvariables, echo=TRUE}
+szn <- "2025"
+```
+
+#Data Manipulation
+Want new columns: AVG score margin, FG% differential, eFG% differential, rebound margin, TO margin, 
+Important Columns: FT%, ORB%, Opponent TOV%
+
+##Mens 
+New: Pace vs Net Rating metric
+Important: Kenpom
+```{r data manipultion men, echo=TRUE}
+seed_filtered <- seed %>%
+  filter(Season == szn)
+
+ds <- ds %>%
+  mutate(
+    Kenpom._.NetRtg = as.numeric(Kenpom._.NetRtg),
+    School.Advanced._.Pace = as.numeric(School.Advanced._.Pace)
+  )
+
+ds_new <- ds %>%
+  left_join(select(seed_filtered, TeamID, Seed), by = c("ID" = "TeamID"))%>%
+  mutate(AVG_Score_Margin = (Points._.Tm. - Points._.Opp.) / Overall._.G) %>%
+  mutate(FG_pct_Difference = Totals._.FG. - Opponent._.FG.) %>%
+  mutate(eFG_pct_Difference = School.Advanced._.eFG. - Opponent.Advanced._.eFG.) %>%
+  mutate(Rebound_Margin = School.Advanced._.TRB. - Opponent.Advanced._.TRB.) %>%
+  mutate(TO_Margin = School.Advanced._.TOV. - Opponent.Advanced._.TOV.) %>%
+  mutate(TriangleEXC = Kenpom._.NetRtg * School.Advanced._.Pace * .01) %>%
+  mutate(Season = szn)
+
+```
+
+deal with missing values
+```{r missing values, echo=TRUE}
+# Remove the ID column from ds before applying PCA
+ds_reduced <- ds_new %>%
+  select(-ID, -School, -Seed)  # Remove non-numeric or identifier columns
+
+# Check for rows with any NA values
+rows_with_na <- ds_reduced %>%
+  filter(if_any(everything(), is.na))
+
+# View the rows with NA values
+print(rows_with_na)
+```
+
+```{r select columns, echo=TRUE}
+ds_new <- ds_new %>%
+  filter(!is.na(Kenpom._.NetRtg)) %>%
+  filter(!is.na(Seed)) %>%
+  select(ID, Season, Seed, AVG_Score_Margin, FG_pct_Difference, eFG_pct_Difference, Rebound_Margin, TO_Margin, TriangleEXC, Kenpom._.NetRtg, Kenpom._.SOSNetRtg, Kenpom._.Luck, Totals._.FT., School.Advanced._.ORB., Opponent.Advanced._.TOV., School.Advanced._.eFG., Overall._.W.L.) %>%
+  mutate_all(~ as.numeric(as.character(.)))
+```
+
+Then reduce demensions with correlation matrix
+
+```{r pca, echo=TRUE}
+library(corrplot)
+
+# Calculate the correlation matrix
+cor_matrix <- cor(ds_new)
+
+# Visualize the correlation matrix
+corrplot(cor_matrix, method = "circle")
+
+```
+
+
+
+##Womens
+```{r data manipultion women, echo=TRUE}
+seed_filtered <- seed %>%
+  filter(Season == szn)
+
+ds %>% select(-School) %>%
+  mutate_all(~ as.numeric(as.character(.)))
+
+ds_new <- ds %>%
+  left_join(select(seed_filtered, TeamID, Seed), by = c("ID" = "TeamID"))%>%
+  mutate(AVG_Score_Margin = (Points_Tm. - Points_Opp.) / Overall_G) %>%
+  mutate(FG_pct_Difference = Totals_FG. - Opponent_FG.) %>%
+  mutate(eFG_pct_Difference = School.Advanced_eFG. - Opponent.Advanced_eFG.) %>%
+  mutate(Rebound_Margin = School.Advanced_TRB. - Opponent.Advanced_TRB.) %>%
+  mutate(TO_Margin = School.Advanced_TOV. - Opponent.Advanced_TOV.) %>%
+  mutate(Season = szn)
+
+```
+Missing values
+```{r data manipultion women, echo=TRUE}
+# Remove the ID column from ds before applying PCA
+ds_reduced <- ds_new %>%
+  select(-ID, -School, -Seed)  # Remove non-numeric or identifier columns
+
+# Check for rows with any NA values
+rows_with_na <- ds_reduced %>%
+  filter(if_any(everything(), is.na))
+
+# View the rows with NA values
+print(rows_with_na)
+```
+
+```{r data manipultion women, echo=TRUE}
+ds_new <- ds_new %>%
+  filter(!is.na(Seed)) %>%
+  select(ID, Season, Seed, AVG_Score_Margin, FG_pct_Difference, eFG_pct_Difference, Rebound_Margin, TO_Margin, School.Advanced_Pace, Overall_W.L., School.Advanced_ORtg, Totals_FT.)
+  
+```
+
+#Export data
+```{r export, echo=TRUE}
+save_name <- "M2025c.csv"
+save_path <- paste0("C:/Users/Evan/Documents/Kaggle/march-machine-learning-mania-2025/My stats/", save_name)
+write.csv(ds_new,save_path,row.names = TRUE)
+```
+
+
+
+
+#Merge
+
+```{r load data, echo=TRUE}
+#twofour <- read.csv(file.choose())
+#compact <- compact %>% filter(Season >= "2011" & Season <= "2024") %>%
+#  select(Season,WTeamID,LTeamID) %>% 
+#  filter(Season != 2021)
+#full_years <- bind_rows(eleven,twelve,thirteen,fourteen,fifteeen,sixteen,seventeen,eighteen,nineteen,twotwo,twothree,twofour)
+#full_years <- select(full_years, -X)
+```
+combine compact and full years
+```{r combine, echo=TRUE}
+combined <- compact %>% left_join(full_years, by = c("Season", "WTeamID" = "ID")) %>%
+  rename_with(~paste0("W_", .), .cols = -c(Season, WTeamID, LTeamID))  # Prefix winning team stats with "W_"
+
+combined <- combined %>%
+  left_join(full_years, by = c("Season", "LTeamID" = "ID")) %>%
+  rename_with(~paste0("L_", .), .cols = -c(Season, WTeamID, LTeamID, starts_with("W_")))
+```
+create a win column with winning stats
+```{r test, echo=TRUE}
+combined_diff <- combined %>%
+  mutate(across(starts_with("W_"), 
+                ~ . - get(str_replace(cur_column(), "W_", "L_")), 
+                .names = "diff_{.col}")) %>%
+  select(Season, WTeamID, LTeamID, starts_with("diff_"))  # Keep only differences
+combined_diff <- combined_diff %>%
+  mutate(Win = 1)  # Since the first team is always the winner in the original data
+
+```
+
+```{r test, echo=TRUE}
+tourney_flipped <- combined_diff %>%
+  rename_with(~str_replace(., "W_", "temp_"), starts_with("W_")) %>%
+  rename_with(~str_replace(., "L_", "W_"), starts_with("L_")) %>%
+  rename_with(~str_replace(., "temp_", "L_"), starts_with("temp_")) %>%
+  mutate(across(starts_with("W_"), ~ . - get(str_replace(cur_column(), "W_", "L_")), .names = "diff_{.col}")) %>%
+  select(Season, WTeamID, LTeamID, starts_with("diff_"))  %>% # Keep only differences 
+  mutate(Win = 0)  # Now, the originally losing team is "winning" in this flipped row
+```
+
+``` {r target, echo=TRUE}
+final_data <- bind_rows(combined_diff, tourney_flipped)
+```
+drop na values
+``` {r na, echo=TRUE}
+final_data <- final_data %>%
+  drop_na()
+```
+
+``` {r export, echo=TRUE}
+save_name <- "Mteens.csv"
+save_path <- paste0("C:/Users/Evan/Documents/Kaggle/march-machine-learning-mania-2025/My stats/", save_name)
+write.csv(teens,save_path,row.names = TRUE)
+```
+
+``` {r export, echo=TRUE}
+twentys <- final_data %>%
+  filter(Season > "2020")
+teens <- final_data %>%
+  filter(Season < "2020")
+```
